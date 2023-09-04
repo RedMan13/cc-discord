@@ -4,7 +4,44 @@ local strings = require "cc.strings"
 local pretty = require 'cc.pretty'
 local client = {}
 local width, height = term.getSize()
+function trim(s) 
+    return (s:gsub("^%s*(.-)%s*$", "%1"))
+end
+function Split(s, delimiter)
+    local result = {};
+    for match in (s..delimiter):gmatch("(.-)"..delimiter) do
+        table.insert(result, match);
+    end
+    return result;
+end
 
+local colorCodes = {
+    [colors.white] = 0xF0F0F0,
+    [colors.orange] = 0xF2B233,
+    [colors.magenta] = 0xE57FD8,
+    [colors.lightBlue] = 0x99B2F2,
+    [colors.yellow] = 0xDEDE6C,
+    [colors.lime] = 0x7FCC19,
+    [colors.pink] = 0xF2B2CC,
+    [colors.gray] = 0x4C4C4C,
+    [colors.lightGray] = 0x999999,
+    [colors.cyan] = 0x4C99B2,
+    [colors.purple] = 0xB266E5,
+    [colors.blue] = 0x3366CC,
+    [colors.brown] = 0x7F664C,
+    [colors.green] = 0x57A64E,
+    [colors.red] = 0xCC4C4C,
+}
+function nearestValue(number)
+    local smallestSoFar, colorValue
+    for k,v in pairs(colorCodes) do
+        if not smallestSoFar or (math.abs(number-v) < smallestSoFar) then
+            smallestSoFar = math.abs(number-v)
+            colorValue = k
+        end
+    end
+    return colorValue
+end
 function getDiscord(path, headers)
     local url = client.createApiUrl(path)
     if not headers then
@@ -12,6 +49,9 @@ function getDiscord(path, headers)
     end
     headers['Authorization'] = client.token
     local response = http.get(url, headers)
+    if not response then
+        return nil
+    end
     return JSON:decode(response.readAll())
 end
 function postDiscord(path, body, headers)
@@ -29,22 +69,22 @@ function postDiscord(path, body, headers)
 end
 function safeReplace(text, match, replacement)
     -- sanitize the living shit out of the matcher
-    match = string.gsub(match, '%(', '%(')
-    match = string.gsub(match, '%)', '%)')
-    match = string.gsub(match, '%%', '%%')
-    match = string.gsub(match, '%[', '%[')
-    match = string.gsub(match, '%]', '%]')
-    match = string.gsub(match, '%*', '%*')
-    match = string.gsub(match, '%+', '%+')
-    match = string.gsub(match, '%-', '%-')
-    match = string.gsub(match, '%?', '%?')
-    match = string.gsub(match, '%.', '%.')
-    match = string.gsub(match, '%|', '%|')
-    match = string.gsub(match, '%^', '%^')
-    match = string.gsub(match, '%$', '%$')
+    match = match:gsub('%(', '%%(')
+    match = match:gsub('%)', '%%)')
+    match = match:gsub('%%', '%%%')
+    match = match:gsub('%[', '%%[')
+    match = match:gsub('%]', '%%]')
+    match = match:gsub('%*', '%%*')
+    match = match:gsub('%+', '%%+')
+    match = match:gsub('%-', '%%-')
+    match = match:gsub('%?', '%%?')
+    match = match:gsub('%.', '%%%.')
+    match = match:gsub('%|', '%%|')
+    match = match:gsub('%^', '%%^')
+    match = match:gsub('%$', '%%$')
     
     -- then make the actual replacment
-    return string.gsub(text, match, replacement)
+    return text:gsub(match, replacement)
 end
 function convertTableToSet(t)
     local set = {}
@@ -54,24 +94,17 @@ function convertTableToSet(t)
     return set
 end
 
+-- might bring back buttons but for now these buttons are completely unused XD
 local button = nil
 local gui = nil
-local messages = {}
-local channels = {}
-local channelSet = {}
-local channelListScroll = 1
 local guilds = {}
 local guildSet = {}
-local guildListScroll = 1
-local members = {}
-local roles = {}
-local roleSet = {}
 local user = {}
 local member = {}
 local open = {
     menu = 'messages',
     guild = '1033551490331197462',
-    channel = '1124567075881500772'
+    channel = '1038236110335266907'
 }
 local shiftDown = false
 local capsLock = false
@@ -85,43 +118,6 @@ local textBoxLines = {
 }
 local whiteSpace = string.rep(' ', width - 2)
 local textCursorIndex = 0
-
-function renderGuilds()
-    gui:clear()
-    term.setCursorBlink(false)
-    for i = guildListScroll, #guilds do
-        if (i - guildListScroll) >= height then
-            break
-        end
-        local name = guilds[i].name
-        button(name, 1, i - guildListScroll, #name, 1, guilds[i].id)
-    end
-    gui:draw()
-end
-function renderChannels()
-    gui:clear()
-    term.setCursorBlink(false)
-    term.clear()
-    button('<', 1, 1, 1, height)
-    local buttonY = 1
-    for i = channelListScroll, #channels do
-        if buttonY > height then
-            break
-        end
-        local channel = channels[i]
-        if channel.type == 0 or channel.type == 1 or channel.type == 3 or channel.type == 5 then
-            local name = '#' .. channel.name
-            button(name, 3, buttonY, #name + 3 -1, 1, channels[i].id)
-            buttonY = buttonY +1
-        elseif channel.type == 4 then
-            term.setCursorPos(2, buttonY)
-            term.write(channel.name .. ':')
-            buttonY = buttonY +1
-        end
-    end
-    gui:draw()
-end
-
 
 local function clampCursor()
     textBoxLines = strings.wrap(textBox, width-2)
@@ -138,6 +134,9 @@ local function clampCursor()
 end
 
 local function inputText(text)
+    if #textBox > 2000 then
+        return
+    end
     local left = string.sub(textBox, 1, textCursorIndex)
     local right = string.sub(textBox, textCursorIndex + 1, #textBox)
     textBox = left .. text .. right
@@ -145,10 +144,12 @@ local function inputText(text)
     local lines = #strings.wrap(text)
     textCursorY = textCursorY + (lines - 1)
     clampCursor()
+    guilds[open.guild].channels[open.channel].msgProto = textBox
 end
 
 function getMember(id)
     local member = {}
+    local members = guilds[open.guild].members
     if not members[id] then
         member = getDiscord('/guilds/' .. open.guild .. '/members/' .. id)
         members[id] = member
@@ -178,7 +179,7 @@ function checkMentionsMyself(message)
 end
 
 function processMessage(info, background)
-    local username = info.member.nick or info.author.global_name
+    local username = info.member.nick or info.author.global_name or info.author.username
     local lines = strings.wrap(info.content, (width - 4) - #username)
     local content = ''
     local textBlit = {}
@@ -191,24 +192,35 @@ function processMessage(info, background)
 
         mentionIds[v.id] = v.member.nick or v.global_name
     end
-    local black = checkMentionsMyself(info) and colors.toBlit(colors.orange) or colors.toBlit(colors.black)
+    local black = checkMentionsMyself(info) and colors.orange or colors.black
     if background then
-        black = colors.toBlit(background)
+        black = background
     end
+    if info.failed then
+        black = colors.red
+    end
+    if info.loading then
+        black = colors.lightGray
+    end
+    black = colors.toBlit(black)
     local white = colors.toBlit(colors.white)
     local blue = colors.toBlit(colors.blue)
+    local darkGrey = colors.toBlit(colors.gray)
     for i,l in pairs(lines) do
         textBlit[i] = ''
         backgroundBlit[i] = ''
         for name,id in l:gmatch('<(a?:[0-9a-zA-Z_]-:)(%d-)>') do
-            l = safeReplace(l, '<' .. name .. id .. '>', name)
+            l = safeReplace(l, '<' .. name .. id .. '>', ':' .. name .. ':')
         end
-        local lastIndex = 1
         for id in l:gmatch('<@([0-9]-)>') do
             local index = string.find(l, '<@([0-9]-)>')
             l = safeReplace(l, '<@' .. id .. '>', '@' .. mentionIds[id])
-            local space = string.rep(black, index - lastIndex)
             local color = string.rep(blue, #mentionIds[id] + 1)
+            backgroundBlit[i] = backgroundBlit[i] .. color
+        end
+        for content in l:gmatch('`(.-)`') do
+            l = safeReplace(l, '`' .. content .. '`', content)
+            local color = string.rep(darkGrey, #content)
             backgroundBlit[i] = backgroundBlit[i] .. color
         end
         textBlit[i] = textBlit[i] .. string.rep(white, #l - #textBlit[i])
@@ -234,20 +246,11 @@ function processMessage(info, background)
     end
     return string.sub(content, 2), textBlit, backgroundBlit
 end
-function clearMessages()
-    local width, height = term.getSize()
-    local clearer = string.rep(' ', width-(#textBoxLines + 1))
-    term.setBackgroundColor(colors.black)
-    term.setTextColor(colors.white)
-    for i = 1, height - 2 do
-        term.setCursorPos(2, i)
-        term.write(clearer)
-    end
-end
 function renderMessages()
     if open.menu == 'messages' then
-        clearMessages()
+        term.clear()
         local i = height - #textBoxLines
+        local messages = guilds[open.guild].channels[open.channel].messages
         for m,v in pairs(messages) do
             local content = strings.wrap(v.content, (width - 4) - #v.user.display)
             local nextAuthor = messages[m+1] and messages[m+1].user.id or ''
@@ -255,8 +258,9 @@ function renderMessages()
             if nextAuthor ~= v.user.id then
                 term.setBackgroundColor(colors.black)
                 term.setCursorPos(2, i - #content)
-                term.setTextColor(v.user.roleColor)
-                term.write(v.user.display)
+                local roleColorBlit = string.rep(v.user.roleColor, string.len(v.user.display))
+                local backgroundBlit = string.rep(colors.toBlit(colors.black), string.len(v.user.display))
+                term.blit(v.user.display, roleColorBlit, backgroundBlit)
                 term.setTextColor(colors.white)
                 term.write(': ')
             end
@@ -288,6 +292,7 @@ function renderMessages()
     end
 end
 function bumpMessages()
+    local messages = guilds[open.guild].channels[open.channel].messages
     local oldMessages = {table.unpack(messages)}
     for i,v in pairs(oldMessages) do
         if i+1 > height then
@@ -296,88 +301,197 @@ function bumpMessages()
         messages[i+1] = v
     end
 end
-function makeRoleSet()
-    for index,role in pairs(roles) do
-        roleSet[role.id] = index
-    end
-end
 function findTopRole(roleList)
-    local topRoleIndex = 0
+    local roles = guilds[open.guild].roles
+    local topRolePosition = 0
     local topRoleId = ''
     for _,id in pairs(roleList) do
-        local index = roleSet[id]
-        if index > topRoleIndex then
-            topRoleIndex = index
+        local position = roles[id].position
+        if position > topRolePosition then
+            topRolePosition = position
             topRoleId = id
         end
     end
-    return roles[roleSet[topRoleId]]
+    return roles[topRoleId]
 end
 function stripMessageData(data)
-    local topRole = findTopRole(data.member.roles)
-    local roleColor = topRole and topRole.color or colors.white
-    local roundedColor = math.pow(2, tonumber(colors.toBlit(roleColor), 16))
+    local roleColor
+    local mentionsMe
+    if data.author == 'system' then
+        roleColor = 0x3366CC
+        mentionsMe = true
+        data.author = {
+            username = 'App Message'
+        }
+        data.member = {}
+    else
+        local topRole = findTopRole(data.member.roles)
+        roleColor = topRole and topRole.color or colors.white
+        mentionsMe = checkMentionsMyself(data)
+    end
     local content, textBlit, backBlit = processMessage(data)
     return {
         id = data.id,
         user = {
-            display = data.member.nick or data.author.global_name,
+            display = data.member.nick or data.author.global_name or data.author.username,
             id = data.author.id,
-            roleColor = math.max(roundedColor, 1)
+            roleColor = colors.toBlit(nearestValue(roleColor))
         },
-        mentionsMe = checkMentionsMyself(data),
+        mentionsMe = mentionsMe,
         content = content,
         textBlit = textBlit,
         backgroundBlit = backBlit
     }
 end
 function storeMessage(data)
+    local messages = guilds[open.guild].channels[open.channel].messages
     bumpMessages()
     messages[1] = stripMessageData(data)
 end
-function createMessage(content)
+function editMessage(id, data) 
+    local messages = guilds[open.guild].channels[open.channel].messages
+    for i,v in pairs(messages) do
+        if v.id == id then
+            local content, textBlit, backBlit = processMessage(data)
+            messages[i].mentionsMe = checkMentionsMyself(data)
+            messages[i].content = content
+            messages[i].textBlit = textBlit
+            messages[i].backgroundBlit = backBlit
+            renderMessages()
+            break
+        end
+    end
+end
+local loadingId = 0
+function createMessage(content, system)
+    if system then 
+        storeMessage({
+            content = content,
+            attachments = {},
+            author = 'system',
+            mentions = {},
+            mention_roles = {},
+            mention_everyone = false,
+            failed = false,
+            loading = true,
+            -- use loading id so system messages and loading messages never conflict
+            id = loadingId
+        })
+        loadingId = loadingId +1
+        renderMessages()
+        return
+    end
+
+    if content:sub(0, 1):find('%s') ~= nil or content:sub(-2, -1):find('%s') ~= nil then
+        content = trim(content)
+        if content:len() == 0 then
+            return
+        end
+    end
+    local curLoadId = loadingId
+    storeMessage({
+        content = content,
+        attachments = {},
+        member = getMember(user.id),
+        author = user,
+        mentions = {},
+        mention_roles = {},
+        mention_everyone = false,
+        failed = false,
+        loading = true,
+        id = curLoadId
+    })
+    loadingId = loadingId +1
+    renderMessages()
+
     local message = JSON:encode({
         content = content
     })
     local res = postDiscord('/channels/' .. open.channel .. '/messages', message)
-    if not res then
-        storeMessage({
+    if not res then 
+        res = {
             content = content,
             attachments = {},
-            member = member,
+            member = getMember(user.id),
             author = user,
             mentions = {},
             mention_roles = {},
-            mention_everyone = false
-        })
-        renderMessages()
+            mention_everyone = false,
+            failed = true,
+            loading = false,
+            id = curLoadId
+        } 
     end
+    editMessage(curLoadId, res)
+    renderMessages()
 end
 function updateMessages()
     local discordMessages = getDiscord('/channels/' .. open.channel .. '/messages?limit=' .. height)
-    for i,v in pairs(discordMessages) do
-        v.guild_id = open.guild
-        v.member = getMember(v.author.id)
-        messages[i] = stripMessageData(v)
+    if not discordMessages then
+        storeMessage({
+            failed = true,
+            content = 'the content for this channel failed to load.\nyou might not have the permisions to read its contents',
+            attachments = {},
+            member = {},
+            author = 'system',
+            mentions = {},
+            mention_roles = {},
+            mention_everyone = false,
+        })
+    else
+        local messages = guilds[open.guild].channels[open.channel].messages
+        -- if we have messages already in the cache then dont try to get more
+        if #messages > 0 then return end
+        for i,v in pairs(discordMessages) do
+            v.guild_id = open.guild
+            v.member = getMember(v.author.id)
+            messages[i] = stripMessageData(v)
+        end
     end
     renderMessages()
 end
+function updateMembers()
+    local members = getDiscord('guilds/'..open.guild..'/members')
+    -- we cant exactly do anything about this other then prevent an error :/
+    if not members then return end
+    for i,v in pairs(members) do
+        guilds[open.guild].members[v.id] = v
+    end
+end
+
 
 function eventHandler(e, data)
     if e == 'READY' then
         term.setCursorPos(1, 1)
         user = data.discordData.user
         client = data.client
-        gui = data.gui
-        button = data.buttonCreator
-        member = getDiscord('/guilds/' .. open.guild .. '/members/' .. user.id)
-        roles = getDiscord('/guilds/' .. open.guild .. '/roles')
-        local discordChannels = getDiscord('/guilds/' .. open.guild .. '/channels')
-        guilds = getDiscord('/users/@me/guilds')
-        for i,v in pairs(guilds) do
-            guildSet[v.id] = i
+        guilds = {}
+        for i,v in pairs(data.discordData.guilds) do
+            local channels = v.channels
+            v.channels = {}
+            for ci,cv in pairs(channels) do
+                cv.messages = {}
+                cv.msgProto = ''
+                v.channels[cv.id] = cv
+            end
+            v.members = {}
+            local roles = v.roles
+            v.roles = {}
+            for ri,rv in pairs(roles) do
+                v.roles[rv.id] = rv
+            end
+            guilds[v.id] = v
         end
-        makeRoleSet()
+        updateMembers()
+        local member = getMember(user.id)
+        local topRole = findTopRole(member.roles)
+        local roleColor = topRole and topRole.color or colors.white
+        user.messageProto = {
+            display = member.nick or user.global_name or user.username,
+            id = user.id,
+            roleColor = colors.toBlit(nearestValue(roleColor))
+        }
+
         updateMessages()
         term.setCursorBlink(true)
         term.setCursorPos(2, height)
@@ -385,23 +499,18 @@ function eventHandler(e, data)
         term.write(whiteSpace)
         term.setBackgroundColor(colors.black)
         term.setCursorPos(2, height)
-
-        button('<', 1, 1, 1, height)
-        gui:draw()
     elseif e == 'MESSAGE_CREATE' then
-        if data.guild_id == open.guild and data.channel_id == open.channel then
+        local messages = guilds[data.guild_id].channels[data.channel_id].messages
+        -- dont add more messages until this channel has been handled
+        if #messages > 0 then
             storeMessage(data)
             renderMessages()
         end
     elseif e == 'MESSAGE_UPDATE' then
-        if data.guild_id == open.guild and data.channel_id == open.channel then
-            for i,v in pairs(messages) do
-                if v.id == data.id and data.content then
-                    messages[i].content = data.content
-                    renderMessages()
-                    break
-                end
-            end
+        local messages = guilds[data.guild_id].channels[data.channel_id].messages
+        -- there wont be the message we wish to edit in this channel if there are no messages
+        if #messages > 0 then
+            editMessage(data.id, data)
         end
     elseif e == 'key' then
         local key = keys.getName(data[2])
@@ -416,16 +525,61 @@ function eventHandler(e, data)
                 inputText('\n')
                 renderMessages()
             else
-                createMessage(textBox)
+                local toSend = textBox
                 textBox = ''
-                textVisualWindow = 0
+                textVisualWindow = 1
                 textCursorX = 0
-                term.setCursorPos(2, height)
-                term.setBackgroundColor(colors.gray)
-                term.write(whiteSpace)
-                term.setBackgroundColor(colors.black)
                 clampCursor()
                 renderMessages()
+                if toSend:sub(0, 1) == '/' then
+                    if toSend:find('/channels([ %d]-)') then
+                        local channels = guilds[open.guild].channels
+                        local page = tonumber(Split(toSend, ' ')[2])
+                        if not page then page = 1 end
+                        local list = ''
+                        local idx = 1
+                        local ended = false
+                        for i,v in pairs(channels) do
+                            if v.type == 0 or v.type == 1 or v.type == 3 or v.type == 5 then
+                                if idx / (height - 3) >= page - 1 then
+                                    if not (idx / (height - 3) < page) then
+                                        list = list..'\npage '..page..'/'..math.floor(#channels / (height - 3))
+                                        ended = true
+                                        break
+                                    else
+                                        local name = v.name
+                                        if #name + 3 + 13 > (width - 1) - 23 then
+                                            name = name:sub(0, (((width - 20) - 4) - 13) - 4)
+                                            name = name .. ' ...'
+                                        end
+                                        list = list..'\n`'..name..'`:'..string.rep(' ', (((width - 20) - 4) - 13) - #name)..v.id
+                                    end
+                                end
+                                idx = idx +1
+                            end
+                        end
+                        -- list want filled to the max, so make it full to the max
+                        if not ended then
+                            list = list..'\npage '..page..'/'..math.floor(#channels / (height - 3))
+                        end
+                        list = list:sub(2, #list)
+                        createMessage(list, true)
+                    elseif toSend:find('/move%-to %d+') then
+                        local channel = tonumber(Split(toSend, ' ')[2])
+                        open.channel = channel
+                        textBox = guilds[open.guild].channels[open.channel].msgProto
+                        inputText('')
+                        updateMembers()
+                        updateMessages()
+                        renderMessages()
+                    else
+                        createMessage('unknown command '..toSend, true)
+                    end
+                    return
+                elseif toSend:sub(0, 2) == '\\/' then
+                    toSend = toSend:sub(1, #toSend)
+                end
+                createMessage(toSend)
             end
         elseif key == 'leftShift' or key == 'rightShift' then
             shiftDown = true
