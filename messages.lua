@@ -134,7 +134,7 @@ local function clampCursor()
 end
 
 local function inputText(text)
-    if #textBox > 2000 then
+    if #textBox + #text > 2000 then
         return
     end
     local left = string.sub(textBox, 1, textCursorIndex)
@@ -152,6 +152,12 @@ function getMember(id)
     local members = guilds[open.guild].members
     if not members[id] then
         member = getDiscord('/guilds/' .. open.guild .. '/members/' .. id)
+        -- discord says this member doesnt exists??????????????????????
+        if not member then
+            member = {
+                roles = {}
+            }
+        end
         members[id] = member
     else
         member = members[id]
@@ -178,20 +184,11 @@ function checkMentionsMyself(message)
     return message.mention_everyone or mentionsMe or mentionsMyRoles
 end
 
+function clampNameToMontitor(name)
+    return math.min(#name, math.floor(width / 3) + 2)
+end
 function processMessage(info, background)
     local username = info.member.nick or info.author.global_name or info.author.username
-    local lines = strings.wrap(info.content, (width - 4) - #username)
-    local content = ''
-    local textBlit = {}
-    local backgroundBlit = {}
-    local mentionIds = {}
-    for _,v in pairs(info.mentions) do
-        if v.id then
-            v.member = getMember(v.id)
-        end
-
-        mentionIds[v.id] = v.member.nick or v.global_name
-    end
     local black = checkMentionsMyself(info) and colors.orange or colors.black
     if background then
         black = background
@@ -206,45 +203,119 @@ function processMessage(info, background)
     local white = colors.toBlit(colors.white)
     local blue = colors.toBlit(colors.blue)
     local darkGrey = colors.toBlit(colors.gray)
-    for i,l in pairs(lines) do
-        textBlit[i] = ''
-        backgroundBlit[i] = ''
-        for name,id in l:gmatch('<(a?:[0-9a-zA-Z_]-:)(%d-)>') do
-            l = safeReplace(l, '<' .. name .. id .. '>', ':' .. name .. ':')
-        end
-        for id in l:gmatch('<@([0-9]-)>') do
-            local index = string.find(l, '<@([0-9]-)>')
-            l = safeReplace(l, '<@' .. id .. '>', '@' .. mentionIds[id])
-            local color = string.rep(blue, #mentionIds[id] + 1)
-            backgroundBlit[i] = backgroundBlit[i] .. color
-        end
-        for content in l:gmatch('`(.-)`') do
-            l = safeReplace(l, '`' .. content .. '`', content)
-            local color = string.rep(darkGrey, #content)
-            backgroundBlit[i] = backgroundBlit[i] .. color
-        end
-        textBlit[i] = textBlit[i] .. string.rep(white, #l - #textBlit[i])
-        backgroundBlit[i] = backgroundBlit[i] .. string.rep(black, #l - #backgroundBlit[i])
-        content = content .. '\n' .. l
-    end
+    local channels = guilds[open.guild].channels
+    local content = info.content
     if #info.attachments > 0 then
-        local attachments = ''
+        content = content .. '\nfiles: \n'
         if #info.attachments == 1 then
-            attachments = info.attachments[1].filename
+            content = content .. info.attachments[1].filename
         else
             for i,v in pairs(info.attachments) do
-                attachments = attachments .. v.filename .. ', '
+                content = content .. v.filename .. ', '
             end
         end
-        attachments = 'files: ' .. attachments
-        -- fill in the stuff with empty space since files dont ask for more then white
-        for i,l in pairs(strings.wrap(attachments, (width - 4) - #username)) do
-            textBlit[#lines + i] = string.rep(white, #l)
-            backgroundBlit[#lines + i] = string.rep(black, #l)
-        end
-        content = content .. '\n' .. attachments
     end
-    return string.sub(content, 2), textBlit, backgroundBlit
+    local textBlit = string.rep(white, #content)
+    local backgroundBlit = string.rep(black, #content)
+    for name,id in content:gmatch('<(a?:[0-9a-zA-Z_]-:)(%d-)>') do
+        local index = content:find('<(a?:[0-9a-zA-Z_]-:)(%d-)>')
+        content = safeReplace(content, '<' .. name .. id .. '>', name)
+        local bcolor = string.rep(blue, #name)
+        backgroundBlit = backgroundBlit:sub(0, index - 1) .. bcolor .. backgroundBlit:sub(#bcolor, #backgroundBlit)
+    end
+    for id in content:gmatch('<@([0-9]-)>') do
+        local index = content:find('<@([0-9]-)>')
+        local member = getMember(id)
+        local display = member.nick or member.user.global_name or member.user.username
+        content = safeReplace(content, '<@' .. id .. '>', '@' .. display)
+        local color = string.rep(blue, #display + 1)
+        backgroundBlit = backgroundBlit:sub(0, index) .. color .. backgroundBlit:sub(#color, #backgroundBlit)
+    end
+    for id in content:gmatch('<#([0-9]-)>') do
+        local index = content:find('<#([0-9]-)>')
+        content = safeReplace(content, '<#' .. id .. '>', '#' .. channels[id].name)
+        local color = string.rep(blue, #channels[id].name + 1)
+        backgroundBlit = backgroundBlit:sub(0, index) .. color .. backgroundBlit:sub(#color, #backgroundBlit)
+    end
+    for content in content:gmatch('`(.-)`') do
+        local index = content:find('`(.-)`')
+        content = safeReplace(content, '`' .. content .. '`', content)
+        local color = string.rep(darkGrey, #content)
+        backgroundBlit = backgroundBlit:sub(0, index) .. color .. backgroundBlit:sub(#color, #backgroundBlit)
+    end
+    
+    local width = (width - clampNameToMontitor(username)) - 4
+    local tBlit = {}
+    local bBlit = {}
+    -- copied from jarj because your mom
+    local lines, lines_n, current_line = {}, 0, ""
+    local curTBlit = ''
+    local curBBlit = ''
+    local function push_line()
+        sleep(0)
+        lines_n = lines_n + 1
+        lines[lines_n] = current_line
+        tBlit[lines_n] = curTBlit
+        bBlit[lines_n] = curBBlit
+        current_line = ""
+        curTBlit = ''
+        curBBlit = ''
+    end
+
+    local pos, length = 1, #content
+    local sub, match = string.sub, string.match
+    print(width)
+    while pos <= length do
+        print(pos)
+        local head = sub(content, pos, pos)
+        if head == " " or head == "\t" then
+            local whitespace = match(content, "^[ \t]+", pos)
+            current_line = current_line .. whitespace
+            curTBlit = curTBlit .. textBlit:sub(pos, #whitespace)
+            curBBlit = curBBlit .. backgroundBlit:sub(pos, #whitespace)
+            pos = pos + #whitespace
+        elseif head == "\n" then
+            push_line()
+            pos = pos + 1
+        else
+            local word = match(content, "^[^ \t\n]+", pos)
+            -- this is for the blit's since the HAVE to have where the word started
+            local start = pos
+            pos = pos + #word
+            if #word > width then
+                -- Print a multiline word
+                while #word > 0 do
+                    local space_remaining = width - #current_line - 1
+                    if space_remaining <= 0 then
+                        push_line()
+                        space_remaining = width
+                    end
+
+                    current_line = current_line .. sub(word, 1, space_remaining)
+                    curTBlit = curTBlit .. textBlit:sub(start, #word - space_remaining)
+                    curBBlit = curBBlit .. backgroundBlit:sub(start, #word - space_remaining)
+                    word = sub(word, space_remaining + 1)
+                end
+            else
+                -- Print a word normally
+                if width - #current_line < #word then push_line() end
+                current_line = current_line .. word
+                curTBlit = curTBlit .. textBlit:sub(pos, #word)
+                curBBlit = curBBlit .. backgroundBlit:sub(pos, #word)
+            end
+        end
+    end
+
+    push_line()
+
+    -- Trim whitespace longer than width.
+    for k, line in pairs(lines) do
+        line = line:sub(1, width)
+        tBlit[k] = textBlit:sub(1, width)
+        bBlit[k] = backgroundBlit:sub(1, width)
+        lines[k] = line
+    end
+    return lines, tBlit, bBlit
 end
 function renderMessages()
     if open.menu == 'messages' then
@@ -252,31 +323,55 @@ function renderMessages()
         local i = height - #textBoxLines
         local messages = guilds[open.guild].channels[open.channel].messages
         for m,v in pairs(messages) do
-            local content = strings.wrap(v.content, (width - 4) - #v.user.display)
             local nextAuthor = messages[m+1] and messages[m+1].user.id or ''
-            local spaceFill = string.rep(' ', #v.user.display +2)
             if nextAuthor ~= v.user.id then
                 term.setBackgroundColor(colors.black)
-                term.setCursorPos(2, i - #content)
-                local roleColorBlit = string.rep(v.user.roleColor, string.len(v.user.display))
-                local backgroundBlit = string.rep(colors.toBlit(colors.black), string.len(v.user.display))
-                term.blit(v.user.display, roleColorBlit, backgroundBlit)
+                term.setCursorPos(2, i - #v.content)
+                term.setTextColor(v.user.roleColor)
+                term.setBackgroundColor(colors.black)
+                local name = v.user.display
+                if #name > math.floor(width / 3) - 2 then
+                    name = name:sub(0, math.floor(width / 3) - 2)
+                    name = name .. ' ...'
+                end
+                term.write(name)
                 term.setTextColor(colors.white)
                 term.write(': ')
             end
             if v.mentionsMe then
                 term.setBackgroundColor(colors.orange)
             end
-            for l = 1, #content do
-                term.setCursorPos(#v.user.display + 4, (l - 1) + (i - #content))
-                term.blit(content[l], v.textBlit[l], v.backgroundBlit[l])
+            for l = 1, #v.content do
+                term.setCursorPos(clampNameToMontitor(v.user.display) + 4, (l - 1) + (i - #v.content))
+                if not v.textBlit[l] then
+                    v.textBlit[l] = ''
+                end
+                if not v.backgroundBlit[l] then
+                    v.backgroundBlit[l] = ''
+                end
+                if #v.textBlit[l] < #v.content[l] then
+                    v.textBlit[l] = v.textBlit[l] .. string.rep(colors.toBlit(colors.white), #v.content[l] - #v.textBlit[l])
+                elseif #v.textBlit[l] > #v.content[l] then
+                    v.textBlit[l] = v.textBlit[l]:sub(0, #v.content[l])
+                end
+                if #v.backgroundBlit[l] < #v.content[l] then
+                    v.backgroundBlit[l] = v.backgroundBlit[l] .. string.rep(colors.toBlit(colors.black), #v.content[l] - #v.backgroundBlit[l])
+                elseif #v.backgroundBlit[l] > #v.content[l] then
+                    v.backgroundBlit[l] = v.backgroundBlit[l]:sub(0, #v.content[l])
+                end
+                term.blit(v.content[l], v.textBlit[l], v.backgroundBlit[l])
             end
-            i = i -#content
+            i = i -#v.content
             if i <= 1 then
                 break
             end
         end
         term.setBackgroundColor(colors.gray)
+        term.setCursorPos(2, 1)
+        term.write(whiteSpace)
+        term.setCursorPos(2, 1)
+        local channelName = guilds[open.guild].channels[open.channel].name
+        term.write(channelName)
         for l = textVisualWindow, #textBoxLines do
             if l - maxTextBoxHeight > maxTextBoxHeight then
                 break
@@ -335,7 +430,7 @@ function stripMessageData(data)
         user = {
             display = data.member.nick or data.author.global_name or data.author.username,
             id = data.author.id,
-            roleColor = colors.toBlit(nearestValue(roleColor))
+            roleColor = nearestValue(roleColor)
         },
         mentionsMe = mentionsMe,
         content = content,
@@ -359,6 +454,19 @@ function editMessage(id, data)
             messages[i].backgroundBlit = backBlit
             renderMessages()
             break
+        end
+    end
+end
+function deleteMessage(id)
+    local messages = guilds[open.guild].channels[open.channel].messages
+    local oldMessages = {table.unpack(messages)}
+    local isShifting = false
+    for i,v in pairs(oldMessages) do
+        if v.id == id then
+            isShifting = true
+        end
+        if isShifting then
+            messages[i] = messages[i+1]
         end
     end
 end
@@ -421,8 +529,10 @@ function createMessage(content, system)
             loading = false,
             id = curLoadId
         } 
+        editMessage(curLoadId, res)
+    else
+        deleteMessage(curLoadId)
     end
-    editMessage(curLoadId, res)
     renderMessages()
 end
 function updateMessages()
@@ -474,6 +584,7 @@ function eventHandler(e, data)
                 cv.msgProto = ''
                 v.channels[cv.id] = cv
             end
+            v.channels.length = #channels
             v.members = {}
             local roles = v.roles
             v.roles = {}
@@ -489,7 +600,7 @@ function eventHandler(e, data)
         user.messageProto = {
             display = member.nick or user.global_name or user.username,
             id = user.id,
-            roleColor = colors.toBlit(nearestValue(roleColor))
+            roleColor = nearestValue(roleColor)
         }
 
         updateMessages()
@@ -517,9 +628,19 @@ function eventHandler(e, data)
         if key == 'left' then
             textCursorX = textCursorX -1
             clampCursor()
+            renderMessages()
         elseif key == 'right' then
             textCursorX = textCursorX +1
             clampCursor()
+            renderMessages()
+        elseif key == 'up' then
+            textCursorY = textCursorY -1
+            clampCursor()
+            renderMessages()
+        elseif key == 'down' then
+            textCursorY = textCursorY +1
+            clampCursor()
+            renderMessages()
         elseif key == 'enter' then
             if shiftDown then
                 inputText('\n')
@@ -543,7 +664,7 @@ function eventHandler(e, data)
                             if v.type == 0 or v.type == 1 or v.type == 3 or v.type == 5 then
                                 if idx / (height - 3) >= page - 1 then
                                     if not (idx / (height - 3) < page) then
-                                        list = list..'\npage '..page..'/'..math.floor(#channels / (height - 3))
+                                        list = list..'\npage '..page..'/'..math.floor(channels.length / (height - 3))
                                         ended = true
                                         break
                                     else
@@ -560,12 +681,24 @@ function eventHandler(e, data)
                         end
                         -- list want filled to the max, so make it full to the max
                         if not ended then
-                            list = list..'\npage '..page..'/'..math.floor(#channels / (height - 3))
+                            list = list..'\npage '..page..'/'..math.floor(channels.length / (height - 3))
                         end
                         list = list:sub(2, #list)
                         createMessage(list, true)
-                    elseif toSend:find('/move%-to %d+') then
-                        local channel = tonumber(Split(toSend, ' ')[2])
+                    elseif toSend:find('/move%-to .+') then
+                        local channel = Split(toSend, ' ')[2]
+                        if tonumber(channel) then
+                            channel = channel
+                        else
+                            for k,v in pairs(guilds[open.guild].channels) do
+                                if type(v) == 'table' then
+                                    if v.name:find(channel) then
+                                        channel = v.id
+                                        break
+                                    end
+                                end
+                            end
+                        end
                         open.channel = channel
                         textBox = guilds[open.guild].channels[open.channel].msgProto
                         inputText('')

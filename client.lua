@@ -65,6 +65,7 @@ function connectDiscord(userToken, intents, eventHandle)
     null = '__NULL__'
 
     ws = http.websocket(gateway)
+    print('connecting...')
 
     function sendJson(table)
         local settings = {
@@ -97,10 +98,16 @@ function connectDiscord(userToken, intents, eventHandle)
         })
     end
 
+    buffer = ''
+
     repeat
         local eventData = {os.pullEvent()}
         local event = eventData[1]
         if event == 'websocket_message' and eventData[2] == gateway then
+            -- MAJOR TODO
+            -- this HAS to use zlib compression on the websocket messages.
+            -- but atm i cant find any lua zlib inflators that dont use 
+            -- something like lua jit or os.execute
             local messageData = textutils.unserialiseJSON(eventData[3])
             local file = fs.open('/debug/' .. (messageData.t and messageData.t or messageData.op) .. '.json', 'w')
             file.write(messageData.t == 'READY' and eventData[3] or JSON:encode(messageData, nil, { 
@@ -116,6 +123,7 @@ function connectDiscord(userToken, intents, eventHandle)
                 heartbeatTimer = os.startTimer(heartbeatInterval)
                 sendPing()
                 sendAuth()
+                print('connected and authorized...')
             elseif messageData.op == 1 then
                 -- discord requested a ping
                 sendPing()
@@ -126,7 +134,7 @@ function connectDiscord(userToken, intents, eventHandle)
             end
         elseif event == 'websocket_closed' then
             closedUrl = eventData[2]
-            print('gateway closed with error ' .. eventData[4] .. ' ' .. eventData[3] and eventData[3])
+            print('gateway closed with error ' .. (eventData[4] or 'unknown') .. ' ' .. eventData[3] and eventData[3])
         elseif event == 'timer' and eventData[2] == heartbeatTimer then
             heartbeatTimer = os.startTimer(heartbeatInterval)
             sendPing()
