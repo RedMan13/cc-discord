@@ -86,6 +86,10 @@ function safeReplace(text, match, replacement)
     -- then make the actual replacment
     return text:gsub(match, replacement)
 end
+function splice(text, rep, start, stop)
+    return text:sub(0, start) .. rep .. text:sub(stop + 1, #text)
+end
+
 function convertTableToSet(t)
     local set = {}
     for i,v in pairs(t) do
@@ -103,8 +107,8 @@ local user = {}
 local member = {}
 local open = {
     menu = 'messages',
-    guild = '1033551490331197462',
-    channel = '1038236110335266907'
+    guild = '860534367856099328',
+    channel = '1149956589042798692'
 }
 local shiftDown = false
 local capsLock = false
@@ -188,7 +192,7 @@ function clampNameToMontitor(name)
     return math.min(#name, math.floor(width / 3) + 2)
 end
 function processMessage(info, background)
-    local username = info.member.nick or info.author.global_name or info.author.username
+    local username = (info.member and info.member.nick) or info.author.global_name or info.author.username
     local black = checkMentionsMyself(info) and colors.orange or colors.black
     if background then
         black = background
@@ -218,103 +222,92 @@ function processMessage(info, background)
     local textBlit = string.rep(white, #content)
     local backgroundBlit = string.rep(black, #content)
     for name,id in content:gmatch('<(a?:[0-9a-zA-Z_]-:)(%d-)>') do
-        local index = content:find('<(a?:[0-9a-zA-Z_]-:)(%d-)>')
-        content = safeReplace(content, '<' .. name .. id .. '>', name)
+        local start = content:find('<(a?:[0-9a-zA-Z_]-:)(%d-)>') - 1
+        local stop = start + 1 + #name + #id + 1
+        content = splice(content, name, start, stop)
+        local fcolor = string.rep(white, #name)
         local bcolor = string.rep(blue, #name)
-        backgroundBlit = backgroundBlit:sub(0, index - 1) .. bcolor .. backgroundBlit:sub(#bcolor, #backgroundBlit)
+        textBlit = splice(textBlit, fcolor, start, stop)
+        backgroundBlit = splice(backgroundBlit, bcolor, start, stop)
     end
     for id in content:gmatch('<@([0-9]-)>') do
-        local index = content:find('<@([0-9]-)>')
+        local start = content:find('<@([0-9]-)>') - 1
+        local stop = start + 2 + #id + 1
         local member = getMember(id)
         local display = member.nick or member.user.global_name or member.user.username
-        content = safeReplace(content, '<@' .. id .. '>', '@' .. display)
-        local color = string.rep(blue, #display + 1)
-        backgroundBlit = backgroundBlit:sub(0, index) .. color .. backgroundBlit:sub(#color, #backgroundBlit)
+        content = splice(content, '@'..display, start, stop)
+        local fcolor = string.rep(white, #display + 1)
+        local bcolor = string.rep(blue, #display + 1)
+        textBlit = splice(textBlit, fcolor, start, stop)
+        backgroundBlit = splice(backgroundBlit, bcolor, start, stop)
     end
     for id in content:gmatch('<#([0-9]-)>') do
-        local index = content:find('<#([0-9]-)>')
-        content = safeReplace(content, '<#' .. id .. '>', '#' .. channels[id].name)
-        local color = string.rep(blue, #channels[id].name + 1)
-        backgroundBlit = backgroundBlit:sub(0, index) .. color .. backgroundBlit:sub(#color, #backgroundBlit)
+        local start = content:find('<#([0-9]-)>') - 1
+        local stop = start + 2 + #id + 1
+        local name = channels[id].name
+        content = splice(content, '#'..name, start, stop)
+        local fcolor = string.rep(white, #name + 1)
+        local bcolor = string.rep(blue, #name + 1)
+        textBlit = splice(textBlit, fcolor, start, stop)
+        backgroundBlit = splice(backgroundBlit, bcolor, start, stop)
     end
     for content in content:gmatch('`(.-)`') do
-        local index = content:find('`(.-)`')
-        content = safeReplace(content, '`' .. content .. '`', content)
-        local color = string.rep(darkGrey, #content)
-        backgroundBlit = backgroundBlit:sub(0, index) .. color .. backgroundBlit:sub(#color, #backgroundBlit)
+        local start = content:find('`(.-)`') - 1
+        local stop = start + 1 + #content + 1
+        content = splice(content, content, start, stop)
+        local fcolor = string.rep(white, #content)
+        local bcolor = string.rep(blue, #content)
+        textBlit = splice(textBlit, fcolor, start, stop)
+        backgroundBlit = splice(backgroundBlit, bcolor, start, stop)
     end
-    
     local width = (width - clampNameToMontitor(username)) - 4
     local tBlit = {}
     local bBlit = {}
-    -- copied from jarj because your mom
-    local lines, lines_n, current_line = {}, 0, ""
-    local curTBlit = ''
-    local curBBlit = ''
-    local function push_line()
-        sleep(0)
+    local lines, lines_n, lastPos = {}, 0, 1
+    local function pushLine(txt)
         lines_n = lines_n + 1
-        lines[lines_n] = current_line
-        tBlit[lines_n] = curTBlit
-        bBlit[lines_n] = curBBlit
-        current_line = ""
-        curTBlit = ''
-        curBBlit = ''
+        lines[lines_n] = txt
+        tBlit[lines_n] = textBlit:sub(lastPos, lastPos + #txt - 1)
+        bBlit[lines_n] = backgroundBlit:sub(lastPos, lastPos + #txt - 1)
+        lastPos = lastPos + #txt
     end
-
-    local pos, length = 1, #content
-    local sub, match = string.sub, string.match
-    print(width)
-    while pos <= length do
-        print(pos)
-        local head = sub(content, pos, pos)
-        if head == " " or head == "\t" then
-            local whitespace = match(content, "^[ \t]+", pos)
-            current_line = current_line .. whitespace
-            curTBlit = curTBlit .. textBlit:sub(pos, #whitespace)
-            curBBlit = curBBlit .. backgroundBlit:sub(pos, #whitespace)
-            pos = pos + #whitespace
-        elseif head == "\n" then
-            push_line()
+    local ittr = 0
+    ittr = function(text, startPos)
+        local lastSpacePos = 1
+        local line = ''
+        local pos = 1
+        while true do
+            local char = text:sub(pos, pos)
+            if char == ' ' or char == '\t' then
+                lastSpacePos = pos
+            end
+            if char == '\n' then
+                pushLine(line)
+                ittr(text:sub(pos + 1))
+                break
+            end
             pos = pos + 1
-        else
-            local word = match(content, "^[^ \t\n]+", pos)
-            -- this is for the blit's since the HAVE to have where the word started
-            local start = pos
-            pos = pos + #word
-            if #word > width then
-                -- Print a multiline word
-                while #word > 0 do
-                    local space_remaining = width - #current_line - 1
-                    if space_remaining <= 0 then
-                        push_line()
-                        space_remaining = width
-                    end
-
-                    current_line = current_line .. sub(word, 1, space_remaining)
-                    curTBlit = curTBlit .. textBlit:sub(start, #word - space_remaining)
-                    curBBlit = curBBlit .. backgroundBlit:sub(start, #word - space_remaining)
-                    word = sub(word, space_remaining + 1)
+            if pos > width then
+                if lastSpacePos > 1 then
+                    line = line:sub(0, lastSpacePos)
+                    pushLine(line)
+                    ittr(text:sub(lastSpacePos + 1))
+                    break
+                else
+                    pushLine(line)
+                    ittr(text:sub(pos - 1))
+                    break
                 end
-            else
-                -- Print a word normally
-                if width - #current_line < #word then push_line() end
-                current_line = current_line .. word
-                curTBlit = curTBlit .. textBlit:sub(pos, #word)
-                curBBlit = curBBlit .. backgroundBlit:sub(pos, #word)
+            end
+            line = line .. char
+            -- nothing more we can do
+            if pos > #text then
+                pushLine(line)
+                break
             end
         end
     end
-
-    push_line()
-
-    -- Trim whitespace longer than width.
-    for k, line in pairs(lines) do
-        line = line:sub(1, width)
-        tBlit[k] = textBlit:sub(1, width)
-        bBlit[k] = backgroundBlit:sub(1, width)
-        lines[k] = line
-    end
+    ittr(content)
     return lines, tBlit, bBlit
 end
 function renderMessages()
@@ -448,7 +441,6 @@ function editMessage(id, data)
     for i,v in pairs(messages) do
         if v.id == id then
             local content, textBlit, backBlit = processMessage(data)
-            messages[i].mentionsMe = checkMentionsMyself(data)
             messages[i].content = content
             messages[i].textBlit = textBlit
             messages[i].backgroundBlit = backBlit
@@ -467,6 +459,14 @@ function deleteMessage(id)
         end
         if isShifting then
             messages[i] = messages[i+1]
+        end
+    end
+end
+function getMessage(id)
+    local messages = guilds[open.guild].channels[open.channel].messages
+    for i,v in pairs(messages) do
+        if v.id == id then
+            return v
         end
     end
 end
@@ -572,6 +572,7 @@ end
 
 function eventHandler(e, data)
     if e == 'READY' then
+        term.clear()
         term.setCursorPos(1, 1)
         user = data.discordData.user
         client = data.client
@@ -620,6 +621,23 @@ function eventHandler(e, data)
     elseif e == 'MESSAGE_UPDATE' then
         local messages = guilds[data.guild_id].channels[data.channel_id].messages
         -- there wont be the message we wish to edit in this channel if there are no messages
+        if #messages > 0 then
+            editMessage(data.id, data)
+        end
+    elseif e == 'MESSAGE_DELETE' then
+        local messages = guilds[data.guild_id].channels[data.channel_id].messages
+        -- we have no good or easy way to delete messages from the stack
+        -- especially since the stack is so small
+        local msg = getMessage(data.id)
+        data.author = {
+            username = msg.user.display
+        }
+        data.mentions = {}
+        data.mention_roles = {}
+        data.mention_everyone = false
+        data.failed = true
+        data.content = '*deleted*'
+        data.attachments = {}
         if #messages > 0 then
             editMessage(data.id, data)
         end

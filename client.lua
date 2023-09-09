@@ -109,14 +109,6 @@ function connectDiscord(userToken, intents, eventHandle)
             -- but atm i cant find any lua zlib inflators that dont use 
             -- something like lua jit or os.execute
             local messageData = textutils.unserialiseJSON(eventData[3])
-            local file = fs.open('/debug/' .. (messageData.t and messageData.t or messageData.op) .. '.json', 'w')
-            file.write(messageData.t == 'READY' and eventData[3] or JSON:encode(messageData, nil, { 
-                pretty = true, 
-                align_keys = false, 
-                array_newline = true,
-                indent = '    '  
-            }))
-            file.close()
             if messageData.op == 10 then
                 messageData = messageData.d
                 heartbeatInterval = messageData.heartbeat_interval / 1000
@@ -132,9 +124,9 @@ function connectDiscord(userToken, intents, eventHandle)
                 sequenceCode = messageData.s
                 eventHandle(messageData.t, messageData.d)
             end
-        elseif event == 'websocket_closed' then
+        elseif event == 'websocket_closed' or event == 'websocket_failure' then
             closedUrl = eventData[2]
-            print('gateway closed with error ' .. (eventData[4] or 'unknown') .. ' ' .. eventData[3] and eventData[3])
+            print('gateway closed with error ' .. (eventData[4] or 'unknown') .. ' ' .. (eventData[3] and eventData[3]))
         elseif event == 'timer' and eventData[2] == heartbeatTimer then
             heartbeatTimer = os.startTimer(heartbeatInterval)
             sendPing()
