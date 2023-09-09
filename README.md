@@ -25,4 +25,4 @@ also, your token is stored in a plan text file. so i would advise you NEVER use 
 3. now download and unzip the files from this repo into that folder making sure that `startup.lua` is still visible from inside the computer folder and NOT in a subfolder. or, if you have the gh cli installed, run `gh repo clone {computerId}` inside `{gameRoot}/saves/{yourSaveName}/computercraft/computer` in your irl comuters terminal
 4. click start on the computer and login.
 
-note that you can replace 
+note that you can replace `computer/{computerId}` with `disk/{diskId}` although idk how to get disk id :/
